@@ -216,7 +216,11 @@ type HTTPRequestsAdaptiveResult struct {
 }
 
 type HTTPRequestAdaptiveGroup struct {
-	Count      int `json:"count"`
+	Count int `json:"count"`
+	Sum   struct {
+		EdgeResponseBytes int64 `json:"edgeResponseBytes"`
+		EdgeRequestBytes  int64 `json:"edgeRequestBytes"`
+	} `json:"sum"`
 	Dimensions struct {
 		CacheStatus               string `json:"cacheStatus"`
 		ClientRequestHTTPProtocol string `json:"clientRequestHTTPProtocol"`
@@ -234,6 +238,10 @@ func (c *GraphQLClient) FetchHTTPRequestsAdaptive(zoneID string, since, until ti
 					orderBy: [count_DESC]
 				) {
 					count
+					sum {
+						edgeResponseBytes
+						edgeRequestBytes
+					}
 					dimensions {
 						cacheStatus
 						clientRequestHTTPProtocol
@@ -333,6 +341,126 @@ func (c *GraphQLClient) FetchHTTPSecurityAdaptive(zoneID string, since, until ti
 	var result HTTPSecurityAdaptiveResult
 	if err := json.Unmarshal(data, &result); err != nil {
 		return nil, fmt.Errorf("unmarshal http security adaptive: %w", err)
+	}
+
+	if len(result.Viewer.Zones) == 0 {
+		return nil, nil
+	}
+	return result.Viewer.Zones[0].Groups, nil
+}
+
+// --- httpRequestsAdaptiveGroups: by HTTP status code ---
+
+type HTTPStatusResult struct {
+	Viewer struct {
+		Zones []struct {
+			Groups []HTTPStatusGroup `json:"httpRequestsAdaptiveGroups"`
+		} `json:"zones"`
+	} `json:"viewer"`
+}
+
+type HTTPStatusGroup struct {
+	Count      int `json:"count"`
+	Dimensions struct {
+		EdgeResponseStatus int `json:"edgeResponseStatus"`
+	} `json:"dimensions"`
+}
+
+func (c *GraphQLClient) FetchHTTPRequestsByStatus(zoneID string, since, until time.Time) ([]HTTPStatusGroup, error) {
+	q := `query ($zoneID: String!, $since: Time!, $until: Time!) {
+		viewer {
+			zones(filter: {zoneTag: $zoneID}) {
+				httpRequestsAdaptiveGroups(
+					filter: {datetime_geq: $since, datetime_lt: $until}
+					limit: 1000
+					orderBy: [count_DESC]
+				) {
+					count
+					dimensions {
+						edgeResponseStatus
+					}
+				}
+			}
+		}
+	}`
+
+	vars := map[string]interface{}{
+		"zoneID": zoneID,
+		"since":  since.Format(time.RFC3339),
+		"until":  until.Format(time.RFC3339),
+	}
+
+	data, err := c.query(q, vars)
+	if err != nil {
+		return nil, err
+	}
+
+	var result HTTPStatusResult
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("unmarshal http status: %w", err)
+	}
+
+	if len(result.Viewer.Zones) == 0 {
+		return nil, nil
+	}
+	return result.Viewer.Zones[0].Groups, nil
+}
+
+// --- httpRequestsAdaptiveGroups: by client country ---
+
+type HTTPCountryResult struct {
+	Viewer struct {
+		Zones []struct {
+			Groups []HTTPCountryGroup `json:"httpRequestsAdaptiveGroups"`
+		} `json:"zones"`
+	} `json:"viewer"`
+}
+
+type HTTPCountryGroup struct {
+	Count int `json:"count"`
+	Sum   struct {
+		EdgeResponseBytes int64 `json:"edgeResponseBytes"`
+	} `json:"sum"`
+	Dimensions struct {
+		ClientCountryName string `json:"clientCountryName"`
+	} `json:"dimensions"`
+}
+
+func (c *GraphQLClient) FetchHTTPRequestsByCountry(zoneID string, since, until time.Time) ([]HTTPCountryGroup, error) {
+	q := `query ($zoneID: String!, $since: Time!, $until: Time!) {
+		viewer {
+			zones(filter: {zoneTag: $zoneID}) {
+				httpRequestsAdaptiveGroups(
+					filter: {datetime_geq: $since, datetime_lt: $until}
+					limit: 5000
+					orderBy: [count_DESC]
+				) {
+					count
+					sum {
+						edgeResponseBytes
+					}
+					dimensions {
+						clientCountryName
+					}
+				}
+			}
+		}
+	}`
+
+	vars := map[string]interface{}{
+		"zoneID": zoneID,
+		"since":  since.Format(time.RFC3339),
+		"until":  until.Format(time.RFC3339),
+	}
+
+	data, err := c.query(q, vars)
+	if err != nil {
+		return nil, err
+	}
+
+	var result HTTPCountryResult
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("unmarshal http country: %w", err)
 	}
 
 	if len(result.Viewer.Zones) == 0 {
