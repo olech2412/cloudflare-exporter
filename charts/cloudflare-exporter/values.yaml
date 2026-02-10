@@ -1,0 +1,107 @@
+# -- Number of replicas
+replicaCount: 1
+
+image:
+  # -- Container image repository
+  repository: ghcr.io/olech2412/cloudflare-exporter
+  # -- Image pull policy
+  pullPolicy: IfNotPresent
+  # -- Overrides the image tag (default: chart appVersion)
+  tag: ""
+
+# -- Image pull secrets for private registries
+imagePullSecrets: []
+# -- Override the release name
+nameOverride: ""
+# -- Override the full release name
+fullnameOverride: ""
+
+# -- Cloudflare zone IDs (comma-separated)
+cloudflareZones: ""
+
+# -- Name of an existing Secret containing Cloudflare credentials.
+# The secret must have keys `CF_API_KEY` and `CF_API_EMAIL`, or `CF_API_TOKEN`.
+existingSecret: ""
+
+# -- Inline credentials (only used if existingSecret is empty). NOT recommended for production.
+cloudflareApiKey: ""
+cloudflareApiEmail: ""
+cloudflareApiToken: ""
+
+# -- Port for the metrics endpoint
+metricsPort: 8080
+
+# -- How far back (in seconds) to query Cloudflare analytics
+scrapeDelay: 300
+
+serviceAccount:
+  # -- Create a ServiceAccount
+  create: true
+  # -- Annotations for the ServiceAccount
+  annotations: {}
+  # -- Override ServiceAccount name
+  name: ""
+
+# -- Annotations for the Pod
+podAnnotations: {}
+
+# -- Labels for the Pod
+podLabels: {}
+
+podSecurityContext:
+  # -- Run as non-root
+  runAsNonRoot: true
+  # -- User ID
+  runAsUser: 65534
+  # -- Group ID
+  runAsGroup: 65534
+  # -- FS group
+  fsGroup: 65534
+  # -- Seccomp profile
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  # -- Disallow privilege escalation
+  allowPrivilegeEscalation: false
+  # -- Read-only root filesystem
+  readOnlyRootFilesystem: true
+  # -- Drop all capabilities
+  capabilities:
+    drop:
+      - ALL
+
+service:
+  # -- Service type
+  type: ClusterIP
+  # -- Service port
+  port: 8080
+
+serviceMonitor:
+  # -- Create a Prometheus ServiceMonitor
+  enabled: false
+  # -- Namespace for the ServiceMonitor (defaults to release namespace)
+  namespace: ""
+  # -- Additional labels for the ServiceMonitor (e.g. release: kube-prometheus-stack)
+  labels: {}
+  # -- Scrape interval
+  interval: 60s
+  # -- Scrape timeout
+  scrapeTimeout: 30s
+
+resources:
+  limits:
+    cpu: 100m
+    memory: 128Mi
+  requests:
+    cpu: 10m
+    memory: 32Mi
+
+# -- Node selector
+nodeSelector: {}
+
+# -- Tolerations
+tolerations: []
+
+# -- Affinity rules
+affinity: {}

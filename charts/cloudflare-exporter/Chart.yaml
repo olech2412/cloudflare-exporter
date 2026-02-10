@@ -1,0 +1,14 @@
+apiVersion: v2
+name: cloudflare-exporter
+description: Prometheus exporter for Cloudflare zone analytics via GraphQL API
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - cloudflare
+  - prometheus
+  - exporter
+  - monitoring
+home: https://github.com/olech2412/cloudflare-exporter
+maintainers:
+  - name: christopho
