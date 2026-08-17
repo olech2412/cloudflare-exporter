@@ -34,6 +34,10 @@ metricsPort: 8080
 # -- How far back (in seconds) to query Cloudflare analytics
 scrapeDelay: 300
 
+# -- Export the N busiest request paths. 0 disables per-path metrics, which is
+# the default because paths have unbounded cardinality.
+topPaths: 0
+
 serviceAccount:
   # -- Create a ServiceAccount
   create: true

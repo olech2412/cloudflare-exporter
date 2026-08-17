@@ -40,6 +40,7 @@ helm install cloudflare-exporter ./charts/cloudflare-exporter \
 | `CF_ZONES` | yes | | Comma-separated zone IDs |
 | `METRICS_PORT` | no | `8080` | Port for `/metrics` endpoint |
 | `SCRAPE_DELAY` | no | `300` | Time window in seconds for adaptive queries |
+| `TOP_PATHS` | no | `0` | Export the N busiest request paths; `0` disables per-path metrics |
 
 \* Either `CF_API_TOKEN` **or** both `CF_API_KEY` + `CF_API_EMAIL`.
 
@@ -70,6 +71,22 @@ helm install cloudflare-exporter ./charts/cloudflare-exporter \
 | `cloudflare_zone_requests_browser` | zone, browser | Requests by browser family |
 | `cloudflare_zone_requests_os` | zone, os | Requests by operating system |
 | `cloudflare_zone_requests_origin_status` | zone, status | Requests by origin response status |
+| `cloudflare_zone_requests_host` | zone, host | Requests by requested host |
+| `cloudflare_zone_requests_host_status` | zone, host, status | Requests by host and HTTP status code |
+| `cloudflare_zone_requests_method` | zone, method | Requests by HTTP method |
+| `cloudflare_zone_bandwidth_host_bytes` | zone, host | Bytes served by requested host |
+
+The host label splits a zone into its individual services, which makes the
+per-service numbers comparable to those of a reverse proxy behind Cloudflare.
+
+### Paths (all plans, opt-in)
+
+Disabled by default because paths have unbounded cardinality. Set `TOP_PATHS` to
+the number of busiest paths to export.
+
+| Metric | Labels | Description |
+|---|---|---|
+| `cloudflare_zone_requests_path` | zone, host, path | Requests by requested path |
 
 ### Security (all plans)
 
@@ -119,6 +136,15 @@ helm install cloudflare-exporter ./charts/cloudflare-exporter \
 | Metric | Labels | Description |
 |---|---|---|
 | `cloudflare_zone_health_check_events` | zone, status, origin_ip, health_check_name, region | Health check events |
+
+### Network Error Logging (Pro+ plans)
+
+Connection failures reported by the visitor's browser. These never reach the
+origin, so they are invisible to server-side monitoring.
+
+| Metric | Labels | Description |
+|---|---|---|
+| `cloudflare_zone_nel_reports` | zone, type, phase, protocol | Client-reported network errors |
 
 ### Exporter
 
