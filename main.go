@@ -21,6 +21,7 @@ type Config struct {
 	Zones       []string
 	Port        int
 	ScrapeDelay int // seconds - how far back to query
+	TopPaths    int // 0 disables per-path metrics
 }
 
 func loadConfig() (*Config, error) {
@@ -70,6 +71,19 @@ func loadConfig() (*Config, error) {
 		cfg.ScrapeDelay = delay
 	}
 
+	// Optional per-path metrics. Paths have unbounded cardinality, so this stays
+	// off unless a limit is given.
+	if t := os.Getenv("TOP_PATHS"); t != "" {
+		top, err := strconv.Atoi(t)
+		if err != nil {
+			return nil, fmt.Errorf("TOP_PATHS invalid: %w", err)
+		}
+		if top < 0 {
+			return nil, fmt.Errorf("TOP_PATHS must not be negative")
+		}
+		cfg.TopPaths = top
+	}
+
 	return cfg, nil
 }
 
@@ -80,7 +94,7 @@ func main() {
 	}
 
 	log.Printf("cloudflare-exporter %s starting on :%d", version, cfg.Port)
-	log.Printf("zones: %v, scrape_delay: %ds", cfg.Zones, cfg.ScrapeDelay)
+	log.Printf("zones: %v, scrape_delay: %ds, top_paths: %d", cfg.Zones, cfg.ScrapeDelay, cfg.TopPaths)
 
 	client := NewGraphQLClient(cfg)
 	collector := NewCloudflareCollector(cfg, client)

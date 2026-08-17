@@ -52,6 +52,7 @@ type CloudflareCollector struct {
 	// Pro+ feature skip flags (log once, then skip)
 	skipFirewall     bool
 	skipHealthChecks bool
+	skipNEL          bool
 
 	// Counter metrics (from adaptive queries - accumulate deltas)
 	requestsTotal              *prometheus.Desc
@@ -68,6 +69,12 @@ type CloudflareCollector struct {
 	requestsByBrowser          *prometheus.Desc
 	requestsByOS               *prometheus.Desc
 	requestsByOriginStatus     *prometheus.Desc
+	requestsByHost             *prometheus.Desc
+	requestsByHostStatus       *prometheus.Desc
+	requestsByMethod           *prometheus.Desc
+	requestsByPath             *prometheus.Desc
+	bandwidthByHost            *prometheus.Desc
+	nelReports                 *prometheus.Desc
 	requestBytesTotal          *prometheus.Desc
 	bandwidthTotal             *prometheus.Desc
 	bandwidthCached            *prometheus.Desc
@@ -169,6 +176,36 @@ func NewCloudflareCollector(cfg *Config, client *GraphQLClient) *CloudflareColle
 			"cloudflare_zone_requests_origin_status",
 			"Number of requests by origin server response status code",
 			[]string{"zone", "status"}, nil,
+		),
+		requestsByHost: prometheus.NewDesc(
+			"cloudflare_zone_requests_host",
+			"Number of requests by requested host, which splits a zone into its individual services",
+			[]string{"zone", "host"}, nil,
+		),
+		requestsByHostStatus: prometheus.NewDesc(
+			"cloudflare_zone_requests_host_status",
+			"Number of requests by requested host and HTTP response status code",
+			[]string{"zone", "host", "status"}, nil,
+		),
+		requestsByMethod: prometheus.NewDesc(
+			"cloudflare_zone_requests_method",
+			"Number of requests by HTTP request method",
+			[]string{"zone", "method"}, nil,
+		),
+		requestsByPath: prometheus.NewDesc(
+			"cloudflare_zone_requests_path",
+			"Number of requests by requested path, limited to the busiest paths (see TOP_PATHS)",
+			[]string{"zone", "host", "path"}, nil,
+		),
+		bandwidthByHost: prometheus.NewDesc(
+			"cloudflare_zone_bandwidth_host_bytes",
+			"Bytes served by requested host",
+			[]string{"zone", "host"}, nil,
+		),
+		nelReports: prometheus.NewDesc(
+			"cloudflare_zone_nel_reports",
+			"Client-reported network errors by type and phase (requires Pro plan or above)",
+			[]string{"zone", "type", "phase", "protocol"}, nil,
 		),
 		requestBytesTotal: prometheus.NewDesc(
 			"cloudflare_zone_request_bytes_total",
@@ -298,6 +335,12 @@ func (c *CloudflareCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.requestsByBrowser
 	ch <- c.requestsByOS
 	ch <- c.requestsByOriginStatus
+	ch <- c.requestsByHost
+	ch <- c.requestsByHostStatus
+	ch <- c.requestsByMethod
+	ch <- c.requestsByPath
+	ch <- c.bandwidthByHost
+	ch <- c.nelReports
 	ch <- c.requestBytesTotal
 	ch <- c.bandwidthTotal
 	ch <- c.bandwidthCached
@@ -366,13 +409,17 @@ func (c *CloudflareCollector) collectZone(ch chan<- prometheus.Metric, zoneID st
 		dnsGroups      []DNSAnalyticsGroup
 		fwGroups       []FirewallEventGroup
 		hcGroups       []HealthCheckGroup
+		hostGroups     []HTTPHostGroup
+		pathGroups     []HTTPPathGroup
+		nelGroups      []NELReportGroup
 
 		adaptiveErr, securityErr, statusErr, countryErr error
 		http1hErr, dnsErr, fwErr, hcErr                 error
+		hostErr, pathErr, nelErr                        error
 	)
 
 	var wg sync.WaitGroup
-	wg.Add(5) // adaptive, security, status, country, dns are always fetched
+	wg.Add(6) // adaptive, security, status, country, dns, host are always fetched
 
 	go func() {
 		defer wg.Done()
@@ -394,6 +441,26 @@ func (c *CloudflareCollector) collectZone(ch chan<- prometheus.Metric, zoneID st
 		defer wg.Done()
 		dnsGroups, dnsErr = c.client.FetchDNSAnalytics(zoneID, adaptiveSince, now)
 	}()
+	go func() {
+		defer wg.Done()
+		hostGroups, hostErr = c.client.FetchHTTPRequestsByHost(zoneID, adaptiveSince, now)
+	}()
+
+	if c.cfg.TopPaths > 0 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			pathGroups, pathErr = c.client.FetchHTTPRequestsByPath(zoneID, adaptiveSince, now, c.cfg.TopPaths)
+		}()
+	}
+
+	if !c.skipNEL {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			nelGroups, nelErr = c.client.FetchNELReports(zoneID, adaptiveSince, now)
+		}()
+	}
 
 	if needHourlyFetch {
 		wg.Add(1)
@@ -457,6 +524,22 @@ func (c *CloudflareCollector) collectZone(ch chan<- prometheus.Metric, zoneID st
 		c.processCountryCounters(ch, zoneID, zs, countryGroups)
 	}
 
+	// --- Adaptive: by host, method and status ---
+	if hostErr != nil {
+		log.Printf("zone %s: host query failed: %v", zoneID, hostErr)
+	} else {
+		c.processHostCounters(ch, zoneID, zs, hostGroups)
+	}
+
+	// --- Adaptive: by path (opt-in via TOP_PATHS) ---
+	if c.cfg.TopPaths > 0 {
+		if pathErr != nil {
+			log.Printf("zone %s: path query failed: %v", zoneID, pathErr)
+		} else {
+			c.processPathCounters(ch, zoneID, zs, pathGroups)
+		}
+	}
+
 	// --- DNS ---
 	if dnsErr != nil {
 		log.Printf("zone %s: dns query failed: %v", zoneID, dnsErr)
@@ -478,6 +561,14 @@ func (c *CloudflareCollector) collectZone(ch chan<- prometheus.Metric, zoneID st
 		c.skipHealthChecks = true
 	} else if !c.skipHealthChecks {
 		c.processHealthCheckCounters(ch, zoneID, zs, hcGroups)
+	}
+
+	// --- NEL reports (Pro+) ---
+	if nelErr != nil {
+		log.Printf("zone %s: NEL query not available (Pro+ required), disabling", zoneID)
+		c.skipNEL = true
+	} else if !c.skipNEL {
+		c.processNELCounters(ch, zoneID, zs, nelGroups)
 	}
 
 	// --- 1h groups (hourly counters + unique visitors gauge) ---
@@ -650,6 +741,100 @@ func (c *CloudflareCollector) processCountryCounters(ch chan<- prometheus.Metric
 			ch <- prometheus.MustNewConstMetric(c.bandwidthByCountry, prometheus.CounterValue,
 				zs.add(counterKey("bw_country", country), bw), zoneID, country)
 		}
+	}
+}
+
+func (c *CloudflareCollector) processHostCounters(ch chan<- prometheus.Metric, zoneID string, zs *zoneState, groups []HTTPHostGroup) {
+	type hostStatusKey struct {
+		host   string
+		status string
+	}
+
+	hostMap := make(map[string]float64)
+	hostBytesMap := make(map[string]float64)
+	methodMap := make(map[string]float64)
+	hostStatusMap := make(map[hostStatusKey]float64)
+
+	for _, g := range groups {
+		count := float64(g.Count)
+
+		if method := g.Dimensions.Method; method != "" {
+			methodMap[method] += count
+		}
+
+		host := g.Dimensions.Host
+		if host == "" {
+			continue
+		}
+		hostMap[host] += count
+		hostBytesMap[host] += float64(g.Sum.EdgeResponseBytes)
+
+		if g.Dimensions.EdgeResponseStatus > 0 {
+			key := hostStatusKey{host: host, status: fmt.Sprintf("%d", g.Dimensions.EdgeResponseStatus)}
+			hostStatusMap[key] += count
+		}
+	}
+
+	for host, count := range hostMap {
+		ch <- prometheus.MustNewConstMetric(c.requestsByHost, prometheus.CounterValue,
+			zs.add(counterKey("host", host), count), zoneID, host)
+	}
+	for host, bytes := range hostBytesMap {
+		ch <- prometheus.MustNewConstMetric(c.bandwidthByHost, prometheus.CounterValue,
+			zs.add(counterKey("bw_host", host), bytes), zoneID, host)
+	}
+	for method, count := range methodMap {
+		ch <- prometheus.MustNewConstMetric(c.requestsByMethod, prometheus.CounterValue,
+			zs.add(counterKey("method", method), count), zoneID, method)
+	}
+	for key, count := range hostStatusMap {
+		ch <- prometheus.MustNewConstMetric(c.requestsByHostStatus, prometheus.CounterValue,
+			zs.add(counterKey("host_status", key.host, key.status), count), zoneID, key.host, key.status)
+	}
+}
+
+func (c *CloudflareCollector) processPathCounters(ch chan<- prometheus.Metric, zoneID string, zs *zoneState, groups []HTTPPathGroup) {
+	type pathKey struct {
+		host string
+		path string
+	}
+
+	pathMap := make(map[pathKey]float64)
+	for _, g := range groups {
+		if g.Dimensions.Path == "" {
+			continue
+		}
+		key := pathKey{host: g.Dimensions.Host, path: g.Dimensions.Path}
+		pathMap[key] += float64(g.Count)
+	}
+
+	for key, count := range pathMap {
+		ch <- prometheus.MustNewConstMetric(c.requestsByPath, prometheus.CounterValue,
+			zs.add(counterKey("path", key.host, key.path), count), zoneID, key.host, key.path)
+	}
+}
+
+func (c *CloudflareCollector) processNELCounters(ch chan<- prometheus.Metric, zoneID string, zs *zoneState, groups []NELReportGroup) {
+	type nelKey struct {
+		reportType string
+		phase      string
+		protocol   string
+	}
+
+	nelMap := make(map[nelKey]float64)
+	for _, g := range groups {
+		key := nelKey{
+			reportType: g.Dimensions.Type,
+			phase:      g.Dimensions.Phase,
+			protocol:   g.Dimensions.Protocol,
+		}
+		nelMap[key] += float64(g.Count)
+	}
+
+	for key, count := range nelMap {
+		ch <- prometheus.MustNewConstMetric(c.nelReports, prometheus.CounterValue,
+			zs.add(counterKey("nel", key.reportType, key.phase, key.protocol), count),
+			zoneID, key.reportType, key.phase, key.protocol)
 	}
 }
 

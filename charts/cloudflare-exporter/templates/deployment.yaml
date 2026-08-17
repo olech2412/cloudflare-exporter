@@ -43,6 +43,8 @@ spec:
               value: {{ .Values.metricsPort | quote }}
             - name: SCRAPE_DELAY
               value: {{ .Values.scrapeDelay | quote }}
+            - name: TOP_PATHS
+              value: {{ .Values.topPaths | quote }}
             - name: CF_ZONES
               value: {{ .Values.cloudflareZones | quote }}
             {{- if .Values.cloudflareApiToken }}

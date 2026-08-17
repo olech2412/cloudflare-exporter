@@ -28,6 +28,7 @@ helm install cloudflare-exporter ./charts/cloudflare-exporter \
 | cloudflareApiToken | string | `""` | Inline credentials (only used if existingSecret is empty). NOT recommended for production. |
 | metricsPort | int | `8080` | Port for the metrics endpoint |
 | scrapeDelay | int | `300` | How far back (in seconds) to query Cloudflare analytics |
+| topPaths | int | `0` | Export the N busiest request paths; 0 disables per-path metrics |
 | serviceAccount.create | bool | `true` | Create a ServiceAccount |
 | serviceAccount.annotations | object | `{}` | Annotations for the ServiceAccount |
 | serviceAccount.name | string | `""` | Override ServiceAccount name |

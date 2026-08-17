@@ -653,3 +653,196 @@ func (c *GraphQLClient) FetchHealthChecks(zoneID string, since, until time.Time)
 	}
 	return result.Viewer.Zones[0].Groups, nil
 }
+
+// --- httpRequestsAdaptiveGroups: by host, method and status ---
+
+type HTTPHostResult struct {
+	Viewer struct {
+		Zones []struct {
+			Groups []HTTPHostGroup `json:"httpRequestsAdaptiveGroups"`
+		} `json:"zones"`
+	} `json:"viewer"`
+}
+
+type HTTPHostGroup struct {
+	Count int `json:"count"`
+	Sum   struct {
+		EdgeResponseBytes int64 `json:"edgeResponseBytes"`
+		EdgeRequestBytes  int64 `json:"edgeRequestBytes"`
+	} `json:"sum"`
+	Dimensions struct {
+		Host               string `json:"clientRequestHTTPHost"`
+		Method             string `json:"clientRequestHTTPMethodName"`
+		EdgeResponseStatus int    `json:"edgeResponseStatus"`
+	} `json:"dimensions"`
+}
+
+func (c *GraphQLClient) FetchHTTPRequestsByHost(zoneID string, since, until time.Time) ([]HTTPHostGroup, error) {
+	q := `query ($zoneID: String!, $since: Time!, $until: Time!) {
+		viewer {
+			zones(filter: {zoneTag: $zoneID}) {
+				httpRequestsAdaptiveGroups(
+					filter: {datetime_geq: $since, datetime_lt: $until}
+					limit: 5000
+					orderBy: [count_DESC]
+				) {
+					count
+					sum {
+						edgeResponseBytes
+						edgeRequestBytes
+					}
+					dimensions {
+						clientRequestHTTPHost
+						clientRequestHTTPMethodName
+						edgeResponseStatus
+					}
+				}
+			}
+		}
+	}`
+
+	vars := map[string]interface{}{
+		"zoneID": zoneID,
+		"since":  since.Format(time.RFC3339),
+		"until":  until.Format(time.RFC3339),
+	}
+
+	data, err := c.query(q, vars)
+	if err != nil {
+		return nil, err
+	}
+
+	var result HTTPHostResult
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("unmarshal http requests by host: %w", err)
+	}
+
+	if len(result.Viewer.Zones) == 0 {
+		return nil, nil
+	}
+	return result.Viewer.Zones[0].Groups, nil
+}
+
+// --- httpRequestsAdaptiveGroups: by request path ---
+//
+// Paths are unbounded in cardinality, so the query is limited to the busiest
+// ones and is only issued when TOP_PATHS is set.
+
+type HTTPPathResult struct {
+	Viewer struct {
+		Zones []struct {
+			Groups []HTTPPathGroup `json:"httpRequestsAdaptiveGroups"`
+		} `json:"zones"`
+	} `json:"viewer"`
+}
+
+type HTTPPathGroup struct {
+	Count      int `json:"count"`
+	Dimensions struct {
+		Host string `json:"clientRequestHTTPHost"`
+		Path string `json:"clientRequestPath"`
+	} `json:"dimensions"`
+}
+
+func (c *GraphQLClient) FetchHTTPRequestsByPath(zoneID string, since, until time.Time, limit int) ([]HTTPPathGroup, error) {
+	q := `query ($zoneID: String!, $since: Time!, $until: Time!, $limit: Int!) {
+		viewer {
+			zones(filter: {zoneTag: $zoneID}) {
+				httpRequestsAdaptiveGroups(
+					filter: {datetime_geq: $since, datetime_lt: $until}
+					limit: $limit
+					orderBy: [count_DESC]
+				) {
+					count
+					dimensions {
+						clientRequestHTTPHost
+						clientRequestPath
+					}
+				}
+			}
+		}
+	}`
+
+	vars := map[string]interface{}{
+		"zoneID": zoneID,
+		"since":  since.Format(time.RFC3339),
+		"until":  until.Format(time.RFC3339),
+		"limit":  limit,
+	}
+
+	data, err := c.query(q, vars)
+	if err != nil {
+		return nil, err
+	}
+
+	var result HTTPPathResult
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("unmarshal http requests by path: %w", err)
+	}
+
+	if len(result.Viewer.Zones) == 0 {
+		return nil, nil
+	}
+	return result.Viewer.Zones[0].Groups, nil
+}
+
+// --- nelReportsAdaptiveGroups: client-side network errors (Pro+) ---
+
+type NELReportsResult struct {
+	Viewer struct {
+		Zones []struct {
+			Groups []NELReportGroup `json:"nelReportsAdaptiveGroups"`
+		} `json:"zones"`
+	} `json:"viewer"`
+}
+
+type NELReportGroup struct {
+	Count      int `json:"count"`
+	Dimensions struct {
+		Type     string `json:"type"`
+		Phase    string `json:"phase"`
+		Protocol string `json:"protocol"`
+	} `json:"dimensions"`
+}
+
+func (c *GraphQLClient) FetchNELReports(zoneID string, since, until time.Time) ([]NELReportGroup, error) {
+	q := `query ($zoneID: String!, $since: Time!, $until: Time!) {
+		viewer {
+			zones(filter: {zoneTag: $zoneID}) {
+				nelReportsAdaptiveGroups(
+					filter: {datetime_geq: $since, datetime_lt: $until}
+					limit: 1000
+					orderBy: [count_DESC]
+				) {
+					count
+					dimensions {
+						type
+						phase
+						protocol
+					}
+				}
+			}
+		}
+	}`
+
+	vars := map[string]interface{}{
+		"zoneID": zoneID,
+		"since":  since.Format(time.RFC3339),
+		"until":  until.Format(time.RFC3339),
+	}
+
+	data, err := c.query(q, vars)
+	if err != nil {
+		return nil, err
+	}
+
+	var result NELReportsResult
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("unmarshal nel reports: %w", err)
+	}
+
+	if len(result.Viewer.Zones) == 0 {
+		return nil, nil
+	}
+	return result.Viewer.Zones[0].Groups, nil
+}
